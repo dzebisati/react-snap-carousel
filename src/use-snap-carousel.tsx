@@ -55,6 +55,17 @@ export const useSnapCarousel = ({
       activePageIndex: 0
     });
 
+  const getIsCustomPageLogic = () => {
+    assert(scrollEl, 'Expected scrollEl to be defined');
+
+    const items = Array.from(scrollEl.children);
+
+    return items.some((item) => {
+      assert(item instanceof HTMLElement, 'Expected HTMLElement');
+      return item.dataset.shouldSnap === 'true';
+    });
+  };
+
   const refreshActivePage = useCallback(
     (pages: number[][]) => {
       if (!scrollEl) {
@@ -100,6 +111,8 @@ export const useSnapCarousel = ({
     }
     const items = Array.from(scrollEl.children);
     const scrollPort = scrollEl.getBoundingClientRect();
+    const isCustomPageLogic = getIsCustomPageLogic();
+
     let currPageStartPos: number;
     const pages = items.reduce<number[][]>((acc, item, i) => {
       assert(item instanceof HTMLElement, 'Expected HTMLElement');
@@ -110,8 +123,11 @@ export const useSnapCarousel = ({
         // We allow items to explicitly mark themselves as snap points via the `data-should-snap`
         // attribute. This allows callsites to augment and/or define their own "page" logic.
         item.dataset.shouldSnap === 'true' ||
-        // Otherwise, we determine pages via the layout.
-        rect[farSidePos] - currPageStartPos > Math.ceil(scrollPort[dimension])
+        // If we're using custom page logic, we determine pages manually.
+        (!isCustomPageLogic &&
+          // Otherwise, we determine pages via the layout.
+          rect[farSidePos] - currPageStartPos >
+            Math.ceil(scrollPort[dimension]))
       ) {
         acc.push([i]);
         const scrollSpacing = getEffectiveScrollSpacing(
@@ -191,7 +207,43 @@ export const useSnapCarousel = ({
   };
 
   const handlePrev = (opts?: SnapCarouselGoToOptions) => {
-    handleGoTo(activePageIndex - 1, opts);
+    const isCustomPageLogic = getIsCustomPageLogic();
+    let indexToGoTo = activePageIndex - 1;
+
+    // If we're using custom page logic, we can meet a case when on the final page
+    // "activePageIndex - 1" will be in the scrolled area, and the previous button will
+    // not work.
+    if (isCustomPageLogic && activePageIndex === pages.length - 1) {
+      assert(scrollEl, 'Expected scrollEl to be defined');
+
+      const { width: scrollZoneWidth, left: scrollZoneLeft } =
+        scrollEl.getBoundingClientRect();
+
+      const pageBreakpointElements = Array.from(scrollEl.children).filter(
+        (item) => {
+          assert(item instanceof HTMLElement, 'Expected HTMLElement');
+          return item.dataset.shouldSnap === 'true';
+        }
+      );
+
+      const visiblePageBreakpointElements = pageBreakpointElements.filter(
+        (pageBreakpointElement) => {
+          const { right: pageElementRight } =
+            pageBreakpointElement.getBoundingClientRect();
+
+          return (
+            pageElementRight >= scrollZoneLeft &&
+            pageElementRight <= scrollZoneLeft + scrollZoneWidth
+          );
+        }
+      );
+
+      if (activePageIndex === pages.length - 1) {
+        indexToGoTo = pages.length - visiblePageBreakpointElements.length - 1;
+      }
+    }
+
+    handleGoTo(indexToGoTo, opts);
   };
 
   const handleNext = (opts?: SnapCarouselGoToOptions) => {
